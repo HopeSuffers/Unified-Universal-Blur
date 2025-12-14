@@ -29,6 +29,8 @@ namespace Unified.UniversalBlur.Runtime
         {
             _profilingSampler = new(k_PassName);
             _propertyBlock = new();
+            
+            requiresIntermediateTexture = true;
         }
 
         public void Setup(BlurConfig blurConfig)
@@ -93,49 +95,44 @@ namespace Unified.UniversalBlur.Runtime
         }
 
 #if UNITY_6000_0_OR_NEWER
-        public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
+    public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
+    {
+        var resourceData = frameData.Get<UniversalResourceData>();
+        var cameraColorSource = resourceData.isActiveTargetBackBuffer
+        ? resourceData.afterPostProcessColor
+        : resourceData.activeColorTexture;
+
+        var desc = new TextureDesc(GetDescriptor());
+
+    desc.name = k_BlurTextureSourceName;
+    TextureHandle source = renderGraph.CreateTexture(desc);
+
+    desc.name = k_BlurTextureDestinationName;
+    TextureHandle destination = renderGraph.CreateTexture(desc);
+
+    using (var builder = renderGraph.AddUnsafePass<RenderGraphPassData>(k_PassName, out var passData, _profilingSampler))
+    {
+        passData.ColorSource = cameraColorSource;
+        passData.Source = source;
+        passData.Destination = destination;
+        passData.MaterialPropertyBlock = _propertyBlock;
+        passData.BlurConfig = _blurConfig;
+
+        builder.AllowPassCulling(false);
+
+        // Declare dependencies:
+        builder.UseTexture(cameraColorSource, AccessFlags.Read);
+        builder.UseTexture(source, AccessFlags.ReadWrite);
+        builder.UseTexture(destination, AccessFlags.ReadWrite);
+
+        builder.SetGlobalTextureAfterPass(destination, Constants.GlobalFullScreenBlurTextureId);
+
+        builder.SetRenderFunc<RenderGraphPassData>((data, ctx) =>
         {
-            var resourceData = frameData.Get<UniversalResourceData>();
-
-            if (resourceData.isActiveTargetBackBuffer)
-            {
-                Debug.LogError(
-                    $"Skipping render pass. UniversalBlurPass requires an intermediate ColorTexture, we can't use the BackBuffer as a texture input.");
-                return;
-            }
-
-            var cameraColorSource = resourceData.activeColorTexture;
-            
-            var descriptor = new TextureDesc(GetDescriptor());
-
-            descriptor.name = k_BlurTextureSourceName;
-            TextureHandle source = renderGraph.CreateTexture(descriptor);
-            descriptor.name = k_BlurTextureDestinationName;
-            TextureHandle destination = renderGraph.CreateTexture(descriptor);
-            
-            using (var builder = renderGraph.AddUnsafePass<RenderGraphPassData>(k_PassName, out var passData, _profilingSampler))
-            {
-                passData.ColorSource = cameraColorSource;
-                passData.Source = source;
-                passData.Destination = destination;
-
-                passData.MaterialPropertyBlock = _propertyBlock;
-                
-                passData.BlurConfig = _blurConfig;
-                
-                builder.AllowPassCulling(false);
-                
-                builder.UseTexture(source, AccessFlags.ReadWrite);
-                builder.UseTexture(destination, AccessFlags.ReadWrite);
-                
-                builder.SetGlobalTextureAfterPass(destination, Constants.GlobalFullScreenBlurTextureId);
-                
-                builder.SetRenderFunc<RenderGraphPassData>((data, ctx) =>
-                {
-                    BlurPasses.KawaseExecutePass(data, new WrappedUnsafeCommandBuffer(ctx.cmd));
-                });
-            }
-        }
+            BlurPasses.KawaseExecutePass(data, new WrappedUnsafeCommandBuffer(ctx.cmd));
+        });
+    }
+}
 #endif
     }
 }
