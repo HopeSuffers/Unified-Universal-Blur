@@ -29,6 +29,8 @@ namespace Unified.UniversalBlur.Runtime
         {
             _profilingSampler = new(k_PassName);
             _propertyBlock = new();
+            
+            requiresIntermediateTexture = true;
         }
 
         public void Setup(BlurConfig blurConfig)
@@ -105,7 +107,10 @@ namespace Unified.UniversalBlur.Runtime
             }
 
             var cameraColorSource = resourceData.activeColorTexture;
-            
+
+            if (resourceData.isActiveTargetBackBuffer)
+                cameraColorSource = resourceData.afterPostProcessColor;
+
             var descriptor = new TextureDesc(GetDescriptor());
 
             descriptor.name = k_BlurTextureSourceName;
